@@ -40,7 +40,6 @@
       use_denoising_batch: true,
       delta: 0.7,
       frame_buffer_size: 1,
-      use_lcm_lora: true,
       use_tiny_vae: true,
       acceleration: "xformers",
       cfg_type: "self",

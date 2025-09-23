@@ -674,6 +674,20 @@ class StreamParameterUpdater(OrchestratorUser):
         # Reset stock_noise to match the new init_noise
         self.stream.stock_noise = torch.zeros_like(self.stream.init_noise)
 
+    def _get_scheduler_scalings(self, timestep):
+        """Get LCM/TCD-specific scaling factors for boundary conditions."""
+        from diffusers import LCMScheduler
+        if isinstance(self.stream.scheduler, LCMScheduler):
+            c_skip, c_out = self.stream.scheduler.get_scalings_for_boundary_condition_discrete(timestep)
+            return c_skip, c_out
+        else:
+            # TCD and other schedulers don't use boundary condition scaling like LCM
+            # They handle scaling internally in their step() method
+            # Return tensors that are compatible with torch.stack()
+            c_skip = torch.tensor(1.0, device=self.stream.device, dtype=self.stream.dtype)
+            c_out = torch.tensor(1.0, device=self.stream.device, dtype=self.stream.dtype)
+            return c_skip, c_out
+
     def _update_timestep_calculations(self) -> None:
         """Update timestep-dependent calculations based on current t_list."""
         self.stream.sub_timesteps = []
@@ -692,7 +706,7 @@ class StreamParameterUpdater(OrchestratorUser):
         c_skip_list = []
         c_out_list = []
         for timestep in self.stream.sub_timesteps:
-            c_skip, c_out = self.stream.scheduler.get_scalings_for_boundary_condition_discrete(timestep)
+            c_skip, c_out = self._get_scheduler_scalings(timestep)
             c_skip_list.append(c_skip)
             c_out_list.append(c_out)
 

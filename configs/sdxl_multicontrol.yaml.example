@@ -31,11 +31,20 @@ seed: 42                    # Base seed (used with seed_blending above)
 frame_buffer_size: 1
 delta: 0.7
 use_denoising_batch: true
-use_lcm_lora: false         # SDXL has built-in optimizations
+# LoRA configuration - SDXL can use LCM LoRA for faster inference
+# lora_dict:
+#   "latent-consistency/lcm-lora-sdxl": 1.0  # Uncomment to enable LCM LoRA for SDXL
+#   # Add other LoRAs here:
+#   # "your_custom_lora": 0.7
+
 use_taesd: true             # Use Tiny AutoEncoder for SDXL
 use_tiny_vae: true
 acceleration: "tensorrt"    # "xformers" for non-TensorRT setups
 cfg_type: "self"
+
+scheduler: "lcm" # Supports "lcm" or "tcd"
+sampler: "normal"
+
 safety_checker: false
 
 # Engine directory for TensorRT

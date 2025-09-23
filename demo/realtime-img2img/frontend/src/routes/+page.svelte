@@ -1026,7 +1026,7 @@
           <ControlNetConfig 
             bind:this={controlNetConfigComponent}
             {controlnetInfo} 
-            {tIndexList} 
+            {tIndexList}
             {guidanceScale}
             {delta}
             {numInferenceSteps}
@@ -1183,5 +1183,8 @@
     cursor: col-resize !important;
   }
 
-  /* Removed unused .resizer:hover selector */
+  /* Improved resizer hover effects */
+  .resizer:hover {
+    background-color: rgb(59 130 246) !important; /* blue-500 */
+  }
 </style>

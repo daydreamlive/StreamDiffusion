@@ -59,6 +59,13 @@ def setup_logging(log_level: str = "INFO"):
 # Initialize logger
 logger = setup_logging(config.log_level)
 
+# Suppress uvicorn INFO messages
+if config.quiet:
+    uvicorn_logger = logging.getLogger('uvicorn')
+    uvicorn_logger.setLevel(logging.WARNING)
+    uvicorn_access_logger = logging.getLogger('uvicorn.access')
+    uvicorn_access_logger.setLevel(logging.WARNING)
+
 
 class AppState:
     """Centralized application state management - SINGLE SOURCE OF TRUTH"""
