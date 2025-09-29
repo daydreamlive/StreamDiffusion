@@ -63,7 +63,6 @@ class Api:
             mode=config.mode,
             model_id_or_path=config.model_id_or_path,
             lora_dict=config.lora_dict,
-            lcm_lora_id=config.lcm_lora_id,
             vae_id=config.vae_id,
             device=config.device,
             dtype=config.dtype,

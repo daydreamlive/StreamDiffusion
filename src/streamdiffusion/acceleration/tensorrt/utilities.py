@@ -360,6 +360,29 @@ class Engine:
             self.graph = None
 
     def infer(self, feed_dict, stream, use_cuda_graph=False):
+        # Filter inputs to only those the engine actually exposes to avoid binding errors
+        try:
+            allowed_inputs = set()
+            for idx in range(self.engine.num_io_tensors):
+                name = self.engine.get_tensor_name(idx)
+                if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
+                    allowed_inputs.add(name)
+
+            # Drop any extra keys (e.g., text_embeds/time_ids) that the engine was not built to accept
+            if allowed_inputs:
+                filtered_feed_dict = {k: v for k, v in feed_dict.items() if k in allowed_inputs}
+                if len(filtered_feed_dict) != len(feed_dict):
+                    missing = [k for k in feed_dict.keys() if k not in allowed_inputs]
+                    if missing:
+                        logger.debug(
+                            "TensorRT Engine: filtering unsupported inputs %s (allowed=%s)",
+                            missing, sorted(list(allowed_inputs))
+                        )
+                feed_dict = filtered_feed_dict
+        except Exception:
+            # Be permissive if engine query fails; proceed with original dict
+            pass
+        
         for name, buf in feed_dict.items():
             self.tensors[name].copy_(buf)
 

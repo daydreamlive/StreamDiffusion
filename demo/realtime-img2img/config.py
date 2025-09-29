@@ -20,6 +20,7 @@ class Args(NamedTuple):
     controlnet_config: str
     api_only: bool
     log_level: str
+    quiet: bool
 
     def pretty_print(self):
         print("\n")
@@ -34,6 +35,7 @@ SAFETY_CHECKER = os.environ.get("SAFETY_CHECKER", None) == "True"
 ENGINE_DIR = os.environ.get("ENGINE_DIR", "engines")
 ACCELERATION = os.environ.get("ACCELERATION", "xformers")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+QUIET = os.environ.get("QUIET", "False").lower() in ("true", "1", "yes", "on")
 
 default_host = os.getenv("HOST", "0.0.0.0")
 default_port = int(os.getenv("PORT", "7860"))
@@ -128,6 +130,13 @@ parser.add_argument(
     default=LOG_LEVEL,
     choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
     help="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+)
+parser.add_argument(
+    "--quiet",
+    dest="quiet",
+    action="store_true",
+    default=QUIET,
+    help="Suppress uvicorn INFO messages (server access logs, etc.)",
 )
 config = Args(**vars(parser.parse_args()))
 config.pretty_print()

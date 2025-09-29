@@ -100,7 +100,6 @@ def _extract_wrapper_params(config: Dict[str, Any]) -> Dict[str, Any]:
         'lora_dict': config.get('lora_dict'),
         'mode': config.get('mode', 'img2img'),
         'output_type': config.get('output_type', 'pil'),
-        'lcm_lora_id': config.get('lcm_lora_id'),
         'vae_id': config.get('vae_id'),
         'device': config.get('device', 'cuda'),
         'dtype': _parse_dtype(config.get('dtype', 'float16')),
@@ -111,7 +110,7 @@ def _extract_wrapper_params(config: Dict[str, Any]) -> Dict[str, Any]:
         'acceleration': config.get('acceleration', 'tensorrt'),
         'do_add_noise': config.get('do_add_noise', True),
         'device_ids': config.get('device_ids'),
-        'use_lcm_lora': config.get('use_lcm_lora', True),
+        'use_lcm_lora': config.get('use_lcm_lora'),  # Backwards compatibility
         'use_tiny_vae': config.get('use_tiny_vae', True),
         'enable_similar_image_filter': config.get('enable_similar_image_filter', False),
         'similar_image_filter_threshold': config.get('similar_image_filter_threshold', 0.98),
@@ -124,6 +123,8 @@ def _extract_wrapper_params(config: Dict[str, Any]) -> Dict[str, Any]:
         'engine_dir': config.get('engine_dir', 'engines'),
         'normalize_prompt_weights': config.get('normalize_prompt_weights', True),
         'normalize_seed_weights': config.get('normalize_seed_weights', True),
+        'scheduler': config.get('scheduler', 'lcm'),
+        'sampler': config.get('sampler', 'normal'),
         'compile_engines_only': config.get('compile_engines_only', False),
     }
     if 'controlnets' in config and config['controlnets']:

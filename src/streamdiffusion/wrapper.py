@@ -75,7 +75,6 @@ class StreamDiffusionWrapper:
         lora_dict: Optional[Dict[str, float]] = None,
         mode: Literal["img2img", "txt2img"] = "img2img",
         output_type: Literal["pil", "pt", "np", "latent"] = "pil",
-        lcm_lora_id: Optional[str] = None,
         vae_id: Optional[str] = None,
         device: Literal["cpu", "cuda"] = "cuda",
         dtype: torch.dtype = torch.float16,
@@ -86,7 +85,7 @@ class StreamDiffusionWrapper:
         acceleration: Literal["none", "xformers", "tensorrt"] = "tensorrt",
         do_add_noise: bool = True,
         device_ids: Optional[List[int]] = None,
-        use_lcm_lora: bool = True,
+        use_lcm_lora: Optional[bool] = None,  # DEPRECATED: Backwards compatibility parameter
         use_tiny_vae: bool = True,
         enable_similar_image_filter: bool = False,
         similar_image_filter_threshold: float = 0.98,
@@ -101,6 +100,9 @@ class StreamDiffusionWrapper:
         build_engines_if_missing: bool = True,
         normalize_prompt_weights: bool = True,
         normalize_seed_weights: bool = True,
+        # Scheduler and sampler options
+        scheduler: Literal["lcm", "tcd"] = "lcm",
+        sampler: Literal["simple", "sgm uniform", "normal", "ddim", "beta", "karras"] = "normal",
         # ControlNet options
         use_controlnet: bool = False,
         controlnet_config: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
@@ -124,6 +126,10 @@ class StreamDiffusionWrapper:
             The model id or path to load.
         t_index_list : List[int]
             The t_index_list to use for inference.
+        min_batch_size : int, optional
+            The minimum batch size for inference, by default 1.
+        max_batch_size : int, optional
+            The maximum batch size for inference, by default 4.
         lora_dict : Optional[Dict[str, float]], optional
             The lora_dict to load, by default None.
             Keys are the LoRA names and values are the LoRA scales.
@@ -132,16 +138,14 @@ class StreamDiffusionWrapper:
             txt2img or img2img, by default "img2img".
         output_type : Literal["pil", "pt", "np", "latent"], optional
             The output type of image, by default "pil".
-        lcm_lora_id : Optional[str], optional
-            The lcm_lora_id to load, by default None.
-            If None, the default LCM-LoRA
-            ("latent-consistency/lcm-lora-sdv1-5") will be used.
         vae_id : Optional[str], optional
             The vae_id to load, by default None.
             If None, the default TinyVAE
             ("madebyollin/taesd") will be used.
         device : Literal["cpu", "cuda"], optional
             The device to use for inference, by default "cuda".
+        device_ids : Optional[List[int]], optional
+            The device ids to use for DataParallel, by default None.
         dtype : torch.dtype, optional
             The dtype for inference, by default torch.float16.
         frame_buffer_size : int, optional
@@ -159,8 +163,11 @@ class StreamDiffusionWrapper:
             by default True.
         device_ids : Optional[List[int]], optional
             The device ids to use for DataParallel, by default None.
-        use_lcm_lora : bool, optional
-            Whether to use LCM-LoRA or not, by default True.
+        use_lcm_lora : Optional[bool], optional
+            DEPRECATED: Use lora_dict instead. For backwards compatibility only.
+            If True, automatically adds appropriate LCM LoRA to lora_dict based on model type.
+            SDXL models get "latent-consistency/lcm-lora-sdxl", others get "latent-consistency/lcm-lora-sdv1-5".
+            By default None (ignored).
         use_tiny_vae : bool, optional
             Whether to use TinyVAE or not, by default True.
         enable_similar_image_filter : bool, optional
@@ -179,19 +186,42 @@ class StreamDiffusionWrapper:
         seed : int, optional
             The seed, by default 2.
         use_safety_checker : bool, optional
-            Whether to use safety checker or not, by default False. Only supported for TensorRT acceleration.
+            Whether to use safety checker or not, by default False.
+        skip_diffusion : bool, optional
+            Whether to skip diffusion and apply only preprocessing/postprocessing hooks, by default False.
+        engine_dir : Optional[Union[str, Path]], optional
+            Directory path for storing/loading TensorRT engines, by default "engines".
+        build_engines_if_missing : bool, optional
+            Whether to build TensorRT engines if they don't exist, by default True.
         normalize_prompt_weights : bool, optional
             Whether to normalize prompt weights in blending to sum to 1,
             by default True. When False, weights > 1 will amplify embeddings.
         normalize_seed_weights : bool, optional
             Whether to normalize seed weights in blending to sum to 1,
             by default True. When False, weights > 1 will amplify noise.
+        scheduler : Literal["lcm", "tcd"], optional
+            The scheduler type to use for denoising, by default "lcm".
+        sampler : Literal["simple", "sgm uniform", "normal", "ddim", "beta", "karras"], optional
+            The sampler type to use for noise scheduling, by default "normal".
         use_controlnet : bool, optional
             Whether to enable ControlNet support, by default False.
         controlnet_config : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]], optional
             ControlNet configuration(s), by default None.
             Can be a single config dict or list of config dicts for multiple ControlNets.
             Each config should contain: model_id, preprocessor (optional), conditioning_scale, etc.
+        use_ipadapter : bool, optional
+            Whether to enable IPAdapter support, by default False.
+        ipadapter_config : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]], optional
+            IPAdapter configuration(s), by default None. Can be a single config dict
+            or list of config dicts for multiple IPAdapters.
+        image_preprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for image preprocessing hooks, by default None.
+        image_postprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for image postprocessing hooks, by default None.
+        latent_preprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for latent preprocessing hooks, by default None.
+        latent_postprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for latent postprocessing hooks, by default None.
         safety_checker_fallback_type : Literal["blank", "previous"], optional
             Whether to use a blank image or the previous image as a fallback, by default "previous".
         safety_checker_threshold: float, optional
@@ -201,7 +231,10 @@ class StreamDiffusionWrapper:
         """
         if compile_engines_only:
             logger.info("compile_engines_only is True, will only compile engines and not load the model")
-            
+        
+        # Store use_lcm_lora for backwards compatibility processing in _load_model
+        self.use_lcm_lora = use_lcm_lora
+
         self.sd_turbo = "turbo" in model_id_or_path
         self.use_controlnet = use_controlnet
         self.use_ipadapter = use_ipadapter
@@ -255,18 +288,19 @@ class StreamDiffusionWrapper:
         self.stream: StreamDiffusion = self._load_model(
             model_id_or_path=model_id_or_path,
             lora_dict=lora_dict,
-            lcm_lora_id=lcm_lora_id,
             vae_id=vae_id,
             t_index_list=t_index_list,
             acceleration=acceleration,
             do_add_noise=do_add_noise,
-            use_lcm_lora=use_lcm_lora,
+            use_lcm_lora=use_lcm_lora, # Deprecated:Backwards compatibility
             use_tiny_vae=use_tiny_vae,
             cfg_type=cfg_type,
             engine_dir=engine_dir,
             build_engines_if_missing=build_engines_if_missing,
             normalize_prompt_weights=normalize_prompt_weights,
             normalize_seed_weights=normalize_seed_weights,
+            scheduler=scheduler,
+            sampler=sampler,
             use_controlnet=use_controlnet,
             controlnet_config=controlnet_config,
             use_ipadapter=use_ipadapter,
@@ -802,33 +836,57 @@ class StreamDiffusionWrapper:
 
     def _denormalize_on_gpu(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """
-        Denormalize image tensor on GPU for efficiency
+        Denormalize image tensor on GPU for efficiency.
 
+        Converts image tensor from diffusion range [-1, 1] to standard image range [0, 1].
 
-        Args:
-            image_tensor: Input tensor on GPU
+        Parameters
+        ----------
+        image_tensor : torch.Tensor
+            Input tensor in diffusion range [-1, 1], expected to be on GPU.
 
-
-        Returns:
-            Denormalized tensor on GPU, clamped to [0,1]
+        Returns
+        -------
+        torch.Tensor
+            Denormalized tensor in range [0, 1], clamped and on GPU.
         """
         return (image_tensor / 2 + 0.5).clamp(0, 1)
 
     def _normalize_on_gpu(self, image_tensor: torch.Tensor) -> torch.Tensor:
-        """Convert tensor from [0,1] (processor range) back to [-1,1] (diffusion range)"""
+        """
+        Normalize tensor from processor range to diffusion range.
+
+        Converts image tensor from standard image range [0, 1] to diffusion range [-1, 1].
+
+        Parameters
+        ----------
+        image_tensor : torch.Tensor
+            Input tensor in standard image range [0, 1], expected to be on GPU.
+
+        Returns
+        -------
+        torch.Tensor
+            Normalized tensor in diffusion range [-1, 1], clamped and on GPU.
+        """
         return (image_tensor * 2 - 1).clamp(-1, 1)
 
     def _tensor_to_pil_optimized(self, image_tensor: torch.Tensor) -> List[Image.Image]:
         """
-        Optimized tensor to PIL conversion with minimal CPU transfers
+        Optimized tensor to PIL conversion with minimal CPU transfers.
 
+        Efficiently converts a batch of GPU tensors to PIL Images with minimal
+        CPU-GPU transfers and memory allocations.
 
-        Args:
-            image_tensor: Input tensor on GPU
+        Parameters
+        ----------
+        image_tensor : torch.Tensor
+            Input tensor in diffusion range [-1, 1], expected to be on GPU.
+            Shape should be (batch_size, channels, height, width).
 
-
-        Returns:
-            List of PIL Images
+        Returns
+        -------
+        List[Image.Image]
+            List of PIL RGB images, one for each item in the batch.
         """
         # Denormalize on GPU first
         denormalized = self._denormalize_on_gpu(image_tensor)
@@ -866,6 +924,23 @@ class StreamDiffusionWrapper:
         return pil_images
 
     def set_nsfw_fallback_img(self, height: int, width: int) -> None:
+        """
+        Set the NSFW fallback image used when safety checker blocks content.
+
+        Creates a black RGB image of the specified dimensions that will be returned
+        when the safety checker determines content should be blocked.
+
+        Parameters
+        ----------
+        height : int
+            Height of the fallback image in pixels.
+        width : int
+            Width of the fallback image in pixels.
+
+        Returns
+        -------
+        None
+        """
         self.nsfw_fallback_img = Image.new("RGB", (height, width), (0, 0, 0))
         if self.output_type == "pt":
             self.nsfw_fallback_img = torch.from_numpy(np.array(self.nsfw_fallback_img)).unsqueeze(0)
@@ -877,7 +952,6 @@ class StreamDiffusionWrapper:
         model_id_or_path: str,
         t_index_list: List[int],
         lora_dict: Optional[Dict[str, float]] = None,
-        lcm_lora_id: Optional[str] = None,
         vae_id: Optional[str] = None,
         acceleration: Literal["none", "xformers", "tensorrt"] = "tensorrt",
         do_add_noise: bool = True,
@@ -888,6 +962,8 @@ class StreamDiffusionWrapper:
         build_engines_if_missing: bool = True,
         normalize_prompt_weights: bool = True,
         normalize_seed_weights: bool = True,
+        scheduler: Literal["lcm", "tcd"] = "lcm",
+        sampler: Literal["simple", "sgm uniform", "normal", "ddim", "beta", "karras"] = "normal",
         use_controlnet: bool = False,
         controlnet_config: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
         use_ipadapter: bool = False,
@@ -906,7 +982,7 @@ class StreamDiffusionWrapper:
         This method does the following:
 
         1. Loads the model from the model_id_or_path.
-        2. Loads and fuses the LCM-LoRA model from the lcm_lora_id if needed.
+        2. Loads and fuses LoRA models from lora_dict if provided.
         3. Loads the VAE model from the vae_id if needed.
         4. Enables acceleration if needed.
         5. Prepares the model for inference.
@@ -916,42 +992,72 @@ class StreamDiffusionWrapper:
         Parameters
         ----------
         model_id_or_path : str
-            The model id or path to load.
+            The model id or path to load. Can be a Hugging Face model ID, local path to
+            safetensors/ckpt file, or directory containing model files.
         t_index_list : List[int]
-            The t_index_list to use for inference.
+            The t_index_list to use for inference. Specifies which denoising timesteps
+            to use from the diffusion schedule.
         lora_dict : Optional[Dict[str, float]], optional
             The lora_dict to load, by default None.
             Keys are the LoRA names and values are the LoRA scales.
             Example: {'LoRA_1' : 0.5 , 'LoRA_2' : 0.7 ,...}
-        lcm_lora_id : Optional[str], optional
-            The lcm_lora_id to load, by default None.
+            Use this to load LCM LoRA: {'latent-consistency/lcm-lora-sdv1-5': 1.0}
         vae_id : Optional[str], optional
-            The vae_id to load, by default None.
-        acceleration : Literal["none", "xfomers", "sfast", "tensorrt"], optional
-            The acceleration method, by default "tensorrt".
-        warmup : int, optional
-            The number of warmup steps to perform, by default 10.
+            The vae_id to load, by default None. If None, uses default TinyVAE
+            ("madebyollin/taesd" for SD1.5, "madebyollin/taesdxl" for SDXL).
+        acceleration : Literal["none", "xformers", "tensorrt"], optional
+            The acceleration method, by default "tensorrt". Note: docstring shows
+            "xfomers" and "sfast" but code uses "xformers".
         do_add_noise : bool, optional
             Whether to add noise for following denoising steps or not,
             by default True.
         use_lcm_lora : bool, optional
-            Whether to use LCM-LoRA or not, by default True.
+            DEPRECATED: Use lora_dict instead. For backwards compatibility only.
+            If True, automatically adds appropriate LCM LoRA to lora_dict based on model type.
+            SDXL models get "latent-consistency/lcm-lora-sdxl", others get "latent-consistency/lcm-lora-sdv1-5".
+            By default None (ignored).
         use_tiny_vae : bool, optional
-            Whether to use TinyVAE or not, by default True.
-        cfg_type : Literal["none", "full", "self", "initialize"],
-        optional
+            Whether to use TinyVAE or not, by default True. TinyVAE is a distilled,
+            smaller VAE model that provides faster encoding/decoding with minimal quality loss.
+        cfg_type : Literal["none", "full", "self", "initialize"], optional
             The cfg_type for img2img mode, by default "self".
             You cannot use anything other than "none" for txt2img mode.
-        seed : int, optional
-            The seed, by default 2.
+        engine_dir : Optional[Union[str, Path]], optional
+            Directory path for storing/loading TensorRT engines, by default "engines".
+        build_engines_if_missing : bool, optional
+            Whether to build TensorRT engines if they don't exist, by default True.
+        normalize_prompt_weights : bool, optional
+            Whether to normalize prompt weights in blending to sum to 1, by default True.
+            When False, weights > 1 will amplify embeddings.
+        normalize_seed_weights : bool, optional
+            Whether to normalize seed weights in blending to sum to 1, by default True.
+            When False, weights > 1 will amplify noise.
+        scheduler : Literal["lcm", "tcd"], optional
+            The scheduler type to use for denoising, by default "lcm".
+        sampler : Literal["simple", "sgm uniform", "normal", "ddim", "beta", "karras"], optional
+            The sampler type to use for noise scheduling, by default "normal".
         use_controlnet : bool, optional
-            Whether to apply ControlNet patch, by default False.
+            Whether to enable ControlNet support, by default False.
         controlnet_config : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]], optional
-            ControlNet configuration(s), by default None.
+            ControlNet configuration(s), by default None. Can be a single config dict
+            or list of config dicts for multiple ControlNets.
         use_ipadapter : bool, optional
-            Whether to apply IPAdapter patch, by default False.
+            Whether to enable IPAdapter support, by default False.
         ipadapter_config : Optional[Union[Dict[str, Any], List[Dict[str, Any]]]], optional
-            IPAdapter configuration(s), by default None.
+            IPAdapter configuration(s), by default None. Can be a single config dict
+            or list of config dicts for multiple IPAdapters.
+        image_preprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for image preprocessing hooks, by default None.
+        image_postprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for image postprocessing hooks, by default None.
+        latent_preprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for latent preprocessing hooks, by default None.
+        latent_postprocessing_config : Optional[Dict[str, Any]], optional
+            Configuration for latent postprocessing hooks, by default None.
+        safety_checker_model_id : Optional[str], optional
+            Model ID for the safety checker, by default "Freepik/nsfw_image_detector".
+        compile_engines_only : bool, optional
+            Whether to only compile engines and not load the model, by default False.
 
         Returns
         -------
@@ -1045,6 +1151,11 @@ class StreamDiffusionWrapper:
                 pipe.text_encoder = pipe.text_encoder.to(device=self.device)
             if hasattr(pipe, "text_encoder_2") and pipe.text_encoder_2 is not None:
                 pipe.text_encoder_2 = pipe.text_encoder_2.to(device=self.device)
+            # Move main pipeline components to device, but skip UNet for TensorRT
+            if hasattr(pipe, "unet") and pipe.unet is not None and acceleration != "tensorrt":
+                pipe.unet = pipe.unet.to(device=self.device)
+            if hasattr(pipe, "vae") and pipe.vae is not None and acceleration != "tensorrt":
+                pipe.vae = pipe.vae.to(device=self.device)
 
         # If we get here, the model loaded successfully - break out of retry loop
         logger.info(f"Model loading succeeded")
@@ -1063,6 +1174,26 @@ class StreamDiffusionWrapper:
         self._is_sdxl = is_sdxl
         
         logger.info(f"_load_model: Detected model type: {model_type} (confidence: {confidence:.2f})")
+        
+        # DEPRECATED: THIS WILL LOAD LCM_LORA IF USE_LCM_LORA IS TRUE
+        # Validate backwards compatibility LCM LoRA selection using proper model detection
+        if hasattr(self, 'use_lcm_lora') and self.use_lcm_lora is not None:
+            if self.use_lcm_lora and not self.sd_turbo and lora_dict is not None:
+                # Determine correct LCM LoRA based on actual model detection
+                lcm_lora = "latent-consistency/lcm-lora-sdxl" if is_sdxl else "latent-consistency/lcm-lora-sdv1-5"
+
+                # Add to lora_dict if not already present
+                if lcm_lora not in lora_dict:
+                    lora_dict[lcm_lora] = 1.0
+                    logger.info(f"Added {lcm_lora} with scale 1.0 to lora_dict")
+                else:
+                    logger.info(f"LCM LoRA {lcm_lora} already present in lora_dict with scale {lora_dict[lcm_lora]}")
+            else:
+                logger.info(f"LCM LoRA will not be loaded because use_lcm_lora is {self.use_lcm_lora} and sd_turbo is {self.sd_turbo}")
+                
+                # Remove use_lcm_lora from self
+                self.use_lcm_lora = None
+                logger.info(f"use_lcm_lora has been removed from self")
 
         stream = StreamDiffusion(
             pipe=pipe,
@@ -1075,32 +1206,67 @@ class StreamDiffusionWrapper:
             frame_buffer_size=self.frame_buffer_size,
             use_denoising_batch=self.use_denoising_batch,
             cfg_type=cfg_type,
+            lora_dict=lora_dict, # We pass this to include loras in engine path names
             normalize_prompt_weights=normalize_prompt_weights,
             normalize_seed_weights=normalize_seed_weights,
+            scheduler=scheduler,
+            sampler=sampler,
         )
-        if not self.sd_turbo:
-            if use_lcm_lora:
-                if lcm_lora_id is not None:
-                    stream.load_lcm_lora(
-                        pretrained_model_name_or_path_or_dict=lcm_lora_id
-                    )
-                else:
-                    stream.load_lcm_lora()
-                stream.fuse_lora()
 
-            if lora_dict is not None:
-                for lora_name, lora_scale in lora_dict.items():
-                    stream.load_lora(lora_name)
-                    stream.fuse_lora(lora_scale=lora_scale)
+        
+        # Load and properly merge LoRA weights using the standard diffusers approach
+        lora_adapters_to_merge = []
+        lora_scales_to_merge = []
+        
+        # Collect all LoRA adapters and their scales from lora_dict
+        if lora_dict is not None:
+            for i, (lora_name, lora_scale) in enumerate(lora_dict.items()):
+                adapter_name = f"custom_lora_{i}"
+                logger.info(f"_load_model: Loading LoRA '{lora_name}' with scale {lora_scale}")
+                
+                try:
+                    # Load LoRA weights with unique adapter name
+                    stream.pipe.load_lora_weights(lora_name, adapter_name=adapter_name)
+                    lora_adapters_to_merge.append(adapter_name)
+                    lora_scales_to_merge.append(lora_scale)
+                    logger.info(f"Successfully loaded LoRA adapter: {adapter_name}")
+                except Exception as e:
+                    logger.error(f"Failed to load LoRA {lora_name}: {e}")
+                    # Continue with other LoRAs even if one fails
+                    continue
+        
+        # Merge all LoRA adapters using the proper diffusers method
+        if lora_adapters_to_merge:
+            try:
+                for adapter_name, scale in zip(lora_adapters_to_merge, lora_scales_to_merge):
+                    logger.info(f"Merging individual LoRA: {adapter_name} with scale {scale}")
+                    stream.pipe.fuse_lora(lora_scale=scale, adapter_names=[adapter_name])
+                
+                # Clean up after individual merging
+                stream.pipe.unload_lora_weights()
+                logger.info("Successfully merged LoRAs individually")
+                
+            except Exception as fallback_error:
+                logger.error(f"LoRA merging fallback also failed: {fallback_error}")
+                logger.warning("Continuing without LoRA merging - LoRAs may not be applied correctly")
+                
+                # Clean up any partial state
+                try:
+                    stream.pipe.unload_lora_weights()
+                except:
+                    pass
 
         if use_tiny_vae:
             if vae_id is not None:
-                stream.vae = AutoencoderTiny.from_pretrained(vae_id).to(dtype=pipe.dtype)
+                stream.vae = AutoencoderTiny.from_pretrained(vae_id).to(dtype=pipe.dtype, device=self.device)
             else:
                 # Use TAESD XL for SDXL models, regular TAESD for SD 1.5
                 taesd_model = "madebyollin/taesdxl" if is_sdxl else "madebyollin/taesd"
-                stream.vae = AutoencoderTiny.from_pretrained(taesd_model).to(dtype=pipe.dtype)
-    
+                stream.vae = AutoencoderTiny.from_pretrained(taesd_model).to(dtype=pipe.dtype, device=self.device)
+        elif acceleration != "tensorrt":
+            # For non-TensorRT acceleration, ensure VAE is on device if it wasn't moved earlier
+            if hasattr(pipe, "vae") and pipe.vae is not None:
+                pipe.vae = pipe.vae.to(device=self.device)
 
         try:
             if acceleration == "xformers":
@@ -1229,8 +1395,8 @@ class StreamDiffusionWrapper:
                     max_batch_size=self.max_batch_size,
                     min_batch_size=self.min_batch_size,
                     mode=self.mode,
-                    use_lcm_lora=use_lcm_lora,
                     use_tiny_vae=use_tiny_vae,
+                    lora_dict=lora_dict,
                     ipadapter_scale=ipadapter_scale,
                     ipadapter_tokens=ipadapter_tokens,
                     is_faceid=is_faceid if use_ipadapter_trt else None
@@ -1241,8 +1407,8 @@ class StreamDiffusionWrapper:
                     max_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     min_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     mode=self.mode,
-                    use_lcm_lora=use_lcm_lora,
                     use_tiny_vae=use_tiny_vae,
+                    lora_dict=lora_dict,
                     ipadapter_scale=ipadapter_scale,
                     ipadapter_tokens=ipadapter_tokens,
                     is_faceid=is_faceid if use_ipadapter_trt else None
@@ -1253,8 +1419,8 @@ class StreamDiffusionWrapper:
                     max_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     min_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     mode=self.mode,
-                    use_lcm_lora=use_lcm_lora,
                     use_tiny_vae=use_tiny_vae,
+                    lora_dict=lora_dict,
                     ipadapter_scale=ipadapter_scale,
                     ipadapter_tokens=ipadapter_tokens,
                     is_faceid=is_faceid if use_ipadapter_trt else None
@@ -1306,10 +1472,15 @@ class StreamDiffusionWrapper:
                 except Exception:
                     pass
                 
-                # If using TensorRT with IP-Adapter, ensure processors and weights are installed BEFORE export
-                if use_ipadapter_trt and has_ipadapter and ipadapter_config and not hasattr(stream, '_ipadapter_module'):
+                # Note: LoRA weights have already been merged permanently during model loading
+                
+                # CRITICAL: Install IPAdapter module BEFORE TensorRT compilation to ensure processors are baked into engines
+                if use_ipadapter and ipadapter_config and not hasattr(stream, '_ipadapter_module'):
                     try:
                         from streamdiffusion.modules.ipadapter_module import IPAdapterModule, IPAdapterConfig, IPAdapterType
+                        logger.info("Installing IPAdapter module before TensorRT compilation...")
+                        
+                        # Use first config if list provided
                         cfg = ipadapter_config[0] if isinstance(ipadapter_config, list) else ipadapter_config
                         ip_cfg = IPAdapterConfig(
                             style_image_key=cfg.get('style_image_key') or 'ipadapter_main',
@@ -1321,17 +1492,28 @@ class StreamDiffusionWrapper:
                             type=IPAdapterType(cfg.get('type', "regular")),
                             insightface_model_name=cfg.get('insightface_model_name'),
                         )
-                        ip_module_for_export = IPAdapterModule(ip_cfg)
-                        ip_module_for_export.install(stream)
-                        setattr(stream, '_ipadapter_module', ip_module_for_export)
-                        try:
-                            logger.info("Installed IP-Adapter processors prior to TensorRT export")
-                        except Exception:
-                            pass
+                        ip_module = IPAdapterModule(ip_cfg)
+                        ip_module.install(stream)
+                        # Expose for later updates
+                        stream._ipadapter_module = ip_module
+                        logger.info("IPAdapter module installed successfully before TensorRT compilation")
+                        
+                        # Cleanup after IPAdapter installation
+                        import gc
+                        gc.collect()
+                        torch.cuda.empty_cache()
+                        torch.cuda.synchronize()
+                        
+                    except torch.cuda.OutOfMemoryError as oom_error:
+                        logger.error(f"CUDA Out of Memory during early IPAdapter installation: {oom_error}")
+                        logger.error("Try reducing batch size, using smaller models, or increasing GPU memory")
+                        raise RuntimeError("Insufficient VRAM for IPAdapter installation. Consider using a GPU with more memory or reducing model complexity.")
+                        
                     except Exception:
                         import traceback
                         traceback.print_exc()
-                        logger.error("Failed to pre-install IP-Adapter prior to TensorRT export")
+                        logger.error("Failed to install IPAdapterModule before TensorRT compilation")
+                        raise
 
                 # NOTE: When IPAdapter is enabled, we must pass num_ip_layers. We cannot know it until after
                 # installing processors in the export wrapper. We construct the wrapper first to discover it,
@@ -1555,13 +1737,13 @@ class StreamDiffusionWrapper:
                             logger.error(f"TensorRT VAE engine loading failed (non-OOM): {e}")
                             raise e
 
+                # Safety checker engine (TensorRT-specific)
                 safety_checker_path = engine_manager.get_engine_path(
                     EngineType.SAFETY_CHECKER,
                     model_id_or_path=safety_checker_model_id,
                     max_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     min_batch_size=self.batch_size if self.mode == "txt2img" else stream.frame_bff_size,
                     mode=self.mode,
-                    use_lcm_lora=use_lcm_lora,
                     use_tiny_vae=use_tiny_vae,
                 )
                 safety_checker_engine_exists = os.path.exists(safety_checker_path)
@@ -1594,7 +1776,7 @@ class StreamDiffusionWrapper:
                             cuda_stream,
                             use_cuda_graph=True,
                         )
-                    
+                        
             if acceleration == "sfast":
                 from streamdiffusion.acceleration.sfast import (
                     accelerate_with_stable_fast,
@@ -1678,6 +1860,8 @@ class StreamDiffusionWrapper:
                 logger.error("Failed to install ControlNetModule")
                 raise
 
+        # IPAdapter module installation has been moved to before TensorRT compilation (see lines 1307-1345)
+        # This ensures processors are properly baked into the TensorRT engines
         if use_ipadapter and ipadapter_config and not hasattr(stream, '_ipadapter_module'):
             try:
                 from streamdiffusion.modules.ipadapter_module import IPAdapterModule, IPAdapterConfig, IPAdapterType
@@ -1706,6 +1890,8 @@ class StreamDiffusionWrapper:
                 traceback.print_exc()
                 logger.error("Failed to install IPAdapterModule")
                 raise
+
+        # Note: LoRA weights have already been merged permanently during model loading
 
         # Install pipeline hook modules (Phase 4: Configuration Integration)
         if image_preprocessing_config and image_preprocessing_config.get('enabled', True):
@@ -1778,7 +1964,6 @@ class StreamDiffusionWrapper:
         else:
             logger.debug("update_control_image: Skipping ControlNet update in skip diffusion mode")
 
-
     def update_style_image(self, image: Union[str, Image.Image, torch.Tensor], is_stream: bool = False, style_key = "ipadapter_main") -> None:
         """Update IPAdapter style image"""
         if not self.use_ipadapter:
@@ -1791,7 +1976,6 @@ class StreamDiffusionWrapper:
         
         
         
-
     def clear_caches(self) -> None:
         """Clear all cached prompt embeddings and seed noise tensors."""
         self.stream._param_updater.clear_caches()
@@ -2114,8 +2298,3 @@ class StreamDiffusionWrapper:
                 logger.info(f"   Reduced resolution: {old_width}x{old_height} -> {self.width}x{self.height}")
         
         logger.info("   Next model load will rebuild engines with these smaller settings")
-
-
-
-
-

@@ -22,10 +22,18 @@ seed: 789
 frame_buffer_size: 1
 delta: 0.7
 use_denoising_batch: true
-use_lcm_lora: true          # SD-Turbo benefits from LCM LoRA
+# LoRA configuration - SD-Turbo can benefit from LCM LoRA
+lora_dict:
+  "latent-consistency/lcm-lora-sdv1-5": 1.0  # LCM LoRA for faster inference
+  # Add other LoRAs here:
+  # "your_custom_lora": 0.7
+
 use_tiny_vae: true
 acceleration: "tensorrt"    # "xformers" for non-TensorRT setups
 cfg_type: "self"
+
+scheduler: "lcm" # Supports "lcm" or "tcd"
+sampler: "normal"
 
 # Engine directory for TensorRT
 engine_dir: "./engines/sdturbo"
