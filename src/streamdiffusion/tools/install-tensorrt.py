@@ -39,6 +39,10 @@ def install(cu: Optional[Literal["11", "12"]] = get_cuda_major()):
         run_pip(
             "install pywin32==306"
         )
+    if platform.system() == 'Windows' and not is_installed("triton"):
+        run_pip(
+            "install triton-windows<3.5"
+        )
 
 
 if __name__ == "__main__":
