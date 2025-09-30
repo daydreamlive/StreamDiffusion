@@ -3,13 +3,48 @@ import importlib.util
 import os
 import subprocess
 import sys
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from packaging.version import Version
 
 
 python = sys.executable
 index_url = os.environ.get("INDEX_URL", "")
+
+
+def _check_torch_installed():
+    try:
+        import torch
+        import torchvision
+    except Exception:
+        msg = (
+            "Missing required pre-installed packages: torch, torchvision\n"
+            "Install the PyTorch CUDA wheels from the appropriate index first, e.g.:\n"
+            "  pip install --index-url https://download.pytorch.org/whl/cu12x torch torchvision\n"
+            "Replace the index URL and versions to match your CUDA runtime."
+        )
+        raise RuntimeError(msg)
+
+    if not torch.version.cuda:
+        raise RuntimeError("Detected CPU-only PyTorch. Install CUDA-enabled torch/vision/audio before installing this package.")
+
+
+def get_cuda_version() -> str:
+    _check_torch_installed()
+
+    import torch
+    return torch.version.cuda
+
+
+def get_cuda_major() -> Optional[Literal["11", "12"]]:
+    version = get_cuda_version()
+    if not version:
+        return None
+
+    major = version.split(".")[0]
+    if major not in ("11", "12"):
+        return None
+    return major
 
 
 def version(package: str) -> Optional[Version]:
