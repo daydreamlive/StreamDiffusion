@@ -13,6 +13,7 @@ from .ipadapter_embedding import IPAdapterEmbeddingPreprocessor
 from .faceid_embedding import FaceIDEmbeddingPreprocessor
 from .feedback import FeedbackPreprocessor
 from .latent_feedback import LatentFeedbackPreprocessor
+from .latent_frequency import LatentFrequencyProcessor
 from .sharpen import SharpenPreprocessor
 from .upscale import UpscalePreprocessor
 from .blur import BlurPreprocessor
@@ -67,6 +68,7 @@ _preprocessor_registry = {
     "hed": HEDPreprocessor,
     "feedback": FeedbackPreprocessor,
     "latent_feedback": LatentFeedbackPreprocessor,
+    "latent_frequency": LatentFrequencyProcessor,
     "sharpen": SharpenPreprocessor,
     "upscale": UpscalePreprocessor,
     "blur": BlurPreprocessor,
@@ -168,6 +170,7 @@ __all__ = [
     "FaceIDEmbeddingPreprocessor",
     "FeedbackPreprocessor",
     "LatentFeedbackPreprocessor",
+    "LatentFrequencyProcessor",
     "get_preprocessor",
     "get_preprocessor_class",
     "register_preprocessor",
