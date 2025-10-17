@@ -369,6 +369,28 @@ stream.prepare(
 
 The delta has a moderating effect on the effectiveness of RCFG.
 
+## Additional Feature Documentation
+
+Comprehensive documentation is available in the [docs folder](src/streamdiffusion/docs/).
+
+- [Core Concepts](src/streamdiffusion/docs/hooks.md)
+- [Modules](src/streamdiffusion/docs/modules/)
+- [Preprocessing](src/streamdiffusion/docs/preprocessing/)
+- [Pipeline](src/streamdiffusion/docs/pipeline.md)
+- [Parameter Updater](src/streamdiffusion/docs/stream_parameter_updater.md)
+- [Wrapper](src/streamdiffusion/docs/wrapper.md)
+- [Config](src/streamdiffusion/docs/config.md)
+- [TensorRT](src/streamdiffusion/docs/acceleration/tensorrt.md)
+
+## Diagrams
+
+- [Architecture Overview](src/streamdiffusion/docs/diagrams/overall_architecture.md)
+- [Hooks Integration](src/streamdiffusion/docs/diagrams/hooks_integration.md)
+- [Orchestrator Flow](src/streamdiffusion/docs/diagrams/orchestrator_flow.md)
+- [Module Integration](src/streamdiffusion/docs/diagrams/module_integration.md)
+- [Parameter Updating](src/streamdiffusion/docs/diagrams/parameter_updating.md)
+- [TensorRT Pipeline](src/streamdiffusion/docs/diagrams/tensorrt_pipeline.md)
+
 ## Development Team
 
 [Aki](https://twitter.com/cumulo_autumn),
