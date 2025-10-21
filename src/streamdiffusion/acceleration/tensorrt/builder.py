@@ -60,6 +60,7 @@ class EngineBuilder:
                 opt_batch_size=opt_batch_size,
                 onnx_opset=onnx_opset,
             )
+            self.network = self.network.to("cpu")
             del self.network
             gc.collect()
             torch.cuda.empty_cache()
@@ -89,7 +90,6 @@ class EngineBuilder:
                 build_all_tactics=build_all_tactics,
                 build_enable_refit=build_enable_refit,
             )
-        
         for file in os.listdir(os.path.dirname(engine_path)):
             if file.endswith('.engine'):
                 continue

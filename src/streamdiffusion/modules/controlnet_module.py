@@ -610,7 +610,7 @@ class ControlNetModule(OrchestratorUser):
                     )
                 else:
                     controlnet = ControlNetModel.from_pretrained(model_id, **load_kwargs)
-            controlnet = controlnet.to(device=self.device, dtype=self.dtype)
+            controlnet = controlnet.to(dtype=self.dtype)
             # Track model_id for updater diffing
             try:
                 setattr(controlnet, 'model_id', model_id)
