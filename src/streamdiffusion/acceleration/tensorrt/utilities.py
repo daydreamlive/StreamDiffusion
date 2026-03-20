@@ -117,7 +117,16 @@ class Engine:
                 CUASSERT(cudart.cudaGraphDestroy(self.graph))
             except:
                 pass
-        
+
+        # Destroy execution context before engine to release CUDA memory properly.
+        # TensorRT requires context to be destroyed before engine; nullifying the
+        # Python reference alone is insufficient — set to None explicitly so the
+        # C++ destructor runs before the engine is released.
+        if hasattr(self, 'context') and self.context is not None:
+            self.context = None
+        if hasattr(self, 'engine') and self.engine is not None:
+            self.engine = None
+
         del self.engine
         del self.context
         del self.buffers
