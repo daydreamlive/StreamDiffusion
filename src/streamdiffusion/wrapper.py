@@ -1109,15 +1109,36 @@ class StreamDiffusionWrapper:
         # TODO: CAN we do this step with model_detection.py?
         is_sdxl_model = False
         model_path_lower = model_id_or_path.lower()
-        
+
+        # Detect HuggingFace Hub path: no file extension and contains a '/' (org/model format),
+        # OR is an absolute/relative local directory path that doesn't end in .safetensors.
+        # from_single_file() only works for local .safetensors files or direct blob URLs;
+        # HF hub IDs (e.g. "stabilityai/sd-turbo") must use from_pretrained().
+        is_hf_hub_id = (
+            not model_id_or_path.endswith('.safetensors')
+            and not os.path.isabs(model_id_or_path)
+            and not model_id_or_path.startswith('./')
+            and '/' in model_id_or_path
+        )
+
         # Check path for SDXL indicators
         if any(indicator in model_path_lower for indicator in ['sdxl', 'xl', '1024']):
             is_sdxl_model = True
             logger.info(f"_load_model: Path suggests SDXL model: {model_id_or_path}")
-        
-        # For .safetensor files, we need to be more careful about pipeline selection
+
+        # Warn when the non-SDXL sd-turbo variant is used — this pipeline is
+        # optimised for SDXL.  We attempt to load it anyway so the caller can
+        # decide whether to remap to 'stabilityai/sdxl-turbo'.
+        if model_id_or_path == "stabilityai/sd-turbo":
+            logger.warning(
+                "_load_model: 'stabilityai/sd-turbo' is the non-SDXL SD 2.1 Turbo "
+                "variant.  This pipeline is optimised for SDXL models. "
+                "Consider using 'stabilityai/sdxl-turbo' instead."
+            )
+
+        # For .safetensors files, we need to be more careful about pipeline selection
         if model_id_or_path.endswith('.safetensors'):
-            # For .safetensor files, try SDXL pipeline first if path suggests SDXL
+            # For .safetensors files, try SDXL pipeline first if path suggests SDXL
             if is_sdxl_model:
                 loading_methods = [
                     (StableDiffusionXLPipeline.from_single_file, "SDXL from_single_file"),
@@ -1130,8 +1151,24 @@ class StreamDiffusionWrapper:
                     (StableDiffusionPipeline.from_single_file, "SD from_single_file"),
                     (StableDiffusionXLPipeline.from_single_file, "SDXL from_single_file")
                 ]
+        elif is_hf_hub_id:
+            # HuggingFace Hub IDs must use from_pretrained(); from_single_file() only
+            # accepts local .safetensors paths or direct blob URLs and will always fail
+            # for hub IDs like "stabilityai/sd-turbo".
+            if is_sdxl_model:
+                loading_methods = [
+                    (AutoPipelineForText2Image.from_pretrained, "AutoPipeline from_pretrained"),
+                    (StableDiffusionXLPipeline.from_pretrained, "SDXL from_pretrained"),
+                    (StableDiffusionPipeline.from_pretrained, "SD from_pretrained"),
+                ]
+            else:
+                loading_methods = [
+                    (AutoPipelineForText2Image.from_pretrained, "AutoPipeline from_pretrained"),
+                    (StableDiffusionPipeline.from_pretrained, "SD from_pretrained"),
+                    (StableDiffusionXLPipeline.from_pretrained, "SDXL from_pretrained"),
+                ]
         else:
-            # For regular model directories or checkpoints, use the original order
+            # For regular model directories or local checkpoints, use the original order
             loading_methods = [
                 (AutoPipelineForText2Image.from_pretrained, "AutoPipeline from_pretrained"),
                 (StableDiffusionPipeline.from_single_file, "SD from_single_file"),
@@ -1149,10 +1186,14 @@ class StreamDiffusionWrapper:
                 # Verify that we have the right pipeline type for SDXL models
                 if is_sdxl_model and not isinstance(pipe, StableDiffusionXLPipeline):
                     logger.warning(f"_load_model: SDXL model detected but loaded with non-SDXL pipeline: {type(pipe)}")
-                    # Try to explicitly load with SDXL pipeline instead
+                    # Try to explicitly load with SDXL pipeline instead.
+                    # Use from_pretrained for HF hub IDs; from_single_file for local paths.
                     try:
                         logger.info(f"_load_model: Retrying with StableDiffusionXLPipeline...")
-                        pipe = StableDiffusionXLPipeline.from_single_file(model_id_or_path).to(dtype=self.dtype)
+                        if is_hf_hub_id:
+                            pipe = StableDiffusionXLPipeline.from_pretrained(model_id_or_path).to(dtype=self.dtype)
+                        else:
+                            pipe = StableDiffusionXLPipeline.from_single_file(model_id_or_path).to(dtype=self.dtype)
                         logger.info(f"_load_model: Successfully loaded using SDXL pipeline on retry")
                     except Exception as retry_error:
                         logger.warning(f"_load_model: SDXL pipeline retry failed: {retry_error}")
